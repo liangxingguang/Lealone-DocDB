@@ -14,7 +14,7 @@ Lealone-DocDB 是一个兼容 [MongoDB](https://www.mongodb.com/) 的文档数�
 
 ## 下载项目源代码
 
-`git clone https://github.com/lealone/Lealone-DocDB.git lealone-docdb
+`git clone https://github.com/lealone/Lealone-DocDB.git lealone-docdb`
 
 假设源代码放在 `E:\lealone-docdb`
 
@@ -39,29 +39,29 @@ Lealone-DocDB 是一个兼容 [MongoDB](https://www.mongodb.com/) 的文档数�
 或者进入 `target` 目录，运行: `java -jar docdb-5.2.0.jar`
 
 ```java
-INFO 09:12:13.384 Lealone version: 5.2.0
-INFO 09:12:13.392 Loading config from file:/E:/lealone-docdb/target/docdb-5.2.0/conf/docdb.yaml
-INFO 09:12:13.444 Base dir: E:/lealone-docdb/target/docdb-5.2.0/data
-INFO 09:12:13.450 Init storage engines: 3 ms
-INFO 09:12:13.474 Init transaction engines: 23 ms
-INFO 09:12:13.477 Init sql engines: 2 ms
-INFO 09:12:13.650 Init protocol server engines: 171 ms
-INFO 09:12:13.651 Init lealone database: 0 ms
-INFO 09:12:13.655 Starting TcpServer accepter
-INFO 09:12:13.657 TcpServer started, host: 127.0.0.1, port: 9210
-INFO 09:12:13.659 Starting DocDBServer accepter
-INFO 09:12:13.659 DocDBServer started, host: 127.0.0.1, port: 9510
-INFO 09:12:13.659 Total time: 272 ms (Load config: 57 ms, Init: 208 ms, Start: 7 ms)
-INFO 09:12:13.660 Exit with Ctrl+C
+INFO 00:23:02.174 Lealone version: 5.2.0
+INFO 00:23:02.180 Loading config from file:/E:/lealone-docdb/target/docdb-5.2.0/conf/docdb.yaml
+INFO 00:23:02.241 Base dir: E:/lealone-docdb/target/docdb-5.2.0/data
+INFO 00:23:02.246 Init storage engines: 2 ms
+INFO 00:23:02.272 Init transaction engines: 25 ms
+INFO 00:23:02.275 Init sql engines: 2 ms
+INFO 00:23:02.453 Init protocol server engines: 177 ms
+INFO 00:23:02.454 Init lealone database: 0 ms
+INFO 00:23:02.457 Starting TcpServer accepter
+INFO 00:23:02.459 TcpServer started, host: 127.0.0.1, port: 9210
+INFO 00:23:02.459 Starting DocDBServer accepter
+INFO 00:23:02.460 DocDBServer started, host: 127.0.0.1, port: 9610
+INFO 00:23:02.461 Total time: 285 ms (Load config: 65 ms, Init: 214 ms, Start: 6 ms)
+INFO 00:23:02.461 Exit with Ctrl+C
 ```
 
 ## 用 MongoDB 客户端访问 Lealone-DocDB
 
 执行以下命令启动 MongoDB 客户端:
 
-`mongodb://127.0.0.1:9610/mydb?serverSelectionTimeoutMS=200000`
+`mongosh mongodb://127.0.0.1:9610/mydb?serverSelectionTimeoutMS=200000`
 
-```json
+```sql
 Connecting to:          mongodb://127.0.0.1:9610/mydb?serverSelectionTimeoutMS=200000
 Using MongoDB:          6.0.0
 Using Mongosh:          1.9.1
@@ -84,6 +84,7 @@ mydb> db.runCommand({ find: "c1" });
   },
   ok: 1
 }
+
 mydb>
 ```
 
