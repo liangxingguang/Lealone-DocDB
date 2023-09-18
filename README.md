@@ -90,7 +90,7 @@ mydb>
 
 ## 在 IDE 中运行
 
-代码导入 IDE 后，先启动 DocDB Server，直接运行 [DocDBServerStart](https://github.com/lealone/Lealone-DocDB/blob/master/docdb-test/src/test/java/org/lealone/docdb/test/DocDBServerStart.java)
+代码导入 IDE 后，先启动 DocDB Server，直接运行 [DocDBServerStart](https://github.com/lealone/Lealone-DocDB/blob/main/docdb-test/src/test/java/org/lealone/docdb/test/DocDBServerStart.java)
 
-然后测试 CRUD 操作，执行 [DocDBCrudTest](https://github.com/lealone/Lealone-DocDB/blob/master/docdb-test/src/test/java/org/lealone/docdb/test/DocDBCrudTest.java)
+然后测试 CRUD 操作，执行 [DocDBCrudTest](https://github.com/lealone/Lealone-DocDB/blob/main/docdb-test/src/test/java/org/lealone/docdb/test/DocDBCrudTest.java)
 
