@@ -7,8 +7,14 @@ package org.lealone.docdb.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.UUID;
 
 import org.bson.BsonArray;
+import org.bson.BsonBinary;
 import org.bson.BsonBinaryReader;
 import org.bson.BsonBinaryWriter;
 import org.bson.BsonBoolean;
@@ -49,6 +55,8 @@ public class DocDBServerConnection extends AsyncConnection {
     private final BsonDocumentCodec codec = new BsonDocumentCodec();
     private final DecoderContext decoderContext = DecoderContext.builder().build();
     private final EncoderContext encoderContext = EncoderContext.builder().build();
+
+    private final HashMap<UUID, ServerSession> sessions = new HashMap<>();
 
     private final Scheduler scheduler;
     private final int connectionId;
@@ -331,6 +339,41 @@ public class DocDBServerConnection extends AsyncConnection {
             setOk(document);
             return document;
         }
+        case "startsession": {
+            Database db = getDatabase(doc);
+            ServerSession session = createSession(db);
+            UUID id = UUID.randomUUID();
+            sessions.put(id, session);
+            BsonDocument document = new BsonDocument();
+            document.append("id", new BsonBinary(id));
+            document.append("timeoutMinutes", new BsonInt32(30));
+            setOk(document);
+            return document;
+        }
+        case "killsessions": {
+            for (UUID id : decodeUUIDs(doc, "killSessions")) {
+                ServerSession session = sessions.remove(id);
+                if (session != null)
+                    session.close();
+            }
+            return newOkBsonDocument();
+        }
+        case "refreshsessions": {
+            for (UUID id : decodeUUIDs(doc, "refreshSessions")) {
+                ServerSession session = sessions.get(id);
+                if (session != null)
+                    session.close();
+            }
+            return newOkBsonDocument();
+        }
+        case "endsessions": {
+            for (UUID id : decodeUUIDs(doc, "endSessions")) {
+                ServerSession session = sessions.remove(id);
+                if (session != null)
+                    session.close();
+            }
+            return newOkBsonDocument();
+        }
         default:
             BsonDocument document = new BsonDocument();
             setWireVersion(document);
@@ -338,6 +381,27 @@ public class DocDBServerConnection extends AsyncConnection {
             setN(document, 0);
             return document;
         }
+    }
+
+    private List<UUID> decodeUUIDs(BsonDocument doc, Object key) {
+        BsonArray ba = doc.getArray(key, null);
+        if (ba != null) {
+            int size = ba.size();
+            List<UUID> list = new ArrayList<>(size);
+            for (int i = 0; i < size; i++) {
+                BsonDocument s = ba.get(i).asDocument();
+                UUID id = s.getBinary("id").asUuid();
+                list.add(id);
+            }
+            return list;
+        }
+        return Collections.emptyList();
+    }
+
+    private BsonDocument newOkBsonDocument() {
+        BsonDocument document = new BsonDocument();
+        setOk(document);
+        return document;
     }
 
     private void setOk(BsonDocument doc) {
