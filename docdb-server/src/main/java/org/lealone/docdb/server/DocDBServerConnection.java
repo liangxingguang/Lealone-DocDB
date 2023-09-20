@@ -12,6 +12,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.bson.BsonArray;
 import org.bson.BsonBinary;
@@ -199,23 +201,13 @@ public class DocDBServerConnection extends AsyncConnection {
         String command = doc.getFirstKey().toLowerCase();
         switch (command) {
         case "insert": {
-            int n = 0;
             Table table = getTable(doc, "insert");
-            // try (ServerSession session = createSession(table.getDatabase())) {
+            ArrayList<BsonDocument> list = new ArrayList<>();
             ServerSession session = createSession(table.getDatabase());
             BsonArray documents = doc.getArray("documents", null);
             if (documents != null) {
                 for (int i = 0, size = documents.size(); i < size; i++) {
-                    String json = documents.get(i).asDocument().toJson();
-                    Row row = table.getTemplateRow();
-                    row.setValue(0, ValueString.get(json));
-                    table.addRow(session, row).onComplete(ar -> {
-                        if (ar.isSucceeded()) {
-                            session.commit();
-                        } else {
-                            session.rollback();
-                        }
-                    });
+                    list.add(documents.get(i).asDocument());
                 }
             }
             while (input.hasRemaining()) {
@@ -223,26 +215,33 @@ public class DocDBServerConnection extends AsyncConnection {
                 input.readInt32(); // size
                 input.readCString();
                 doc = decode(input);
+                list.add(doc);
+            }
+            int size = list.size();
+            AtomicInteger counter = new AtomicInteger(size);
+            AtomicBoolean isFailed = new AtomicBoolean(false);
+            for (int i = 0; i < size && !isFailed.get(); i++) {
+                String json = list.get(i).toJson();
                 if (DEBUG)
                     logger.info(doc.toJson());
-
-                String json = doc.toJson();
                 Row row = table.getTemplateRow();
                 row.setValue(0, ValueString.get(json));
                 table.addRow(session, row).onComplete(ar -> {
-                    table.getDatabase().removeSession(session);
-                    if (ar.isSucceeded()) {
-                        session.commit();
-                    } else {
+                    if (isFailed.get())
+                        return;
+                    if (ar.isFailed()) {
+                        isFailed.set(true);
                         session.rollback();
                     }
+                    if (counter.decrementAndGet() == 0 || isFailed.get()) {
+                        session.commit();
+                        table.getDatabase().removeSession(session);
+                    }
                 });
-                n++;
             }
-            // }
             BsonDocument document = new BsonDocument();
             setOk(document);
-            setN(document, n);
+            setN(document, size);
             return document;
         }
         case "find": {
