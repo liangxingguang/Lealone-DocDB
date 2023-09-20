@@ -5,33 +5,21 @@
  */
 package org.lealone.docdb.server;
 
-import static java.util.Arrays.asList;
-import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
-
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.bson.BsonArray;
 import org.bson.BsonBinaryReader;
 import org.bson.BsonBinaryWriter;
 import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
-import org.bson.BsonElement;
 import org.bson.BsonInt32;
 import org.bson.BsonInt64;
-import org.bson.BsonReader;
 import org.bson.BsonString;
-import org.bson.BsonType;
-import org.bson.BsonValue;
 import org.bson.ByteBufNIO;
-import org.bson.codecs.BsonValueCodecProvider;
-import org.bson.codecs.Codec;
+import org.bson.codecs.BsonDocumentCodec;
 import org.bson.codecs.DecoderContext;
 import org.bson.codecs.EncoderContext;
-import org.bson.codecs.ValueCodecProvider;
-import org.bson.codecs.configuration.CodecRegistry;
 import org.bson.io.BasicOutputBuffer;
 import org.bson.io.ByteBufferBsonInput;
 import org.lealone.common.exceptions.DbException;
@@ -56,6 +44,11 @@ import org.lealone.server.Scheduler;
 public class DocDBServerConnection extends AsyncConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(DocDBServerConnection.class);
+    private static final boolean DEBUG = true;
+
+    private final BsonDocumentCodec codec = new BsonDocumentCodec();
+    private final DecoderContext decoderContext = DecoderContext.builder().build();
+    private final EncoderContext encoderContext = EncoderContext.builder().build();
 
     private final Scheduler scheduler;
     private final int connectionId;
@@ -110,7 +103,10 @@ public class DocDBServerConnection extends AsyncConnection {
             int requestID = input.readInt32();
             int responseTo = input.readInt32();
             int opCode = input.readInt32();
-            logger.info("opCode: {}", opCode);
+            if (DEBUG)
+                logger.info("scheduler: {}", Thread.currentThread().getName());
+            if (DEBUG)
+                logger.info("opCode: {}, requestID: {}, responseTo: {}", opCode, requestID, responseTo);
             switch (opCode) {
             case 2013: {
                 handleMessage(input, requestID, responseTo);
@@ -129,7 +125,7 @@ public class DocDBServerConnection extends AsyncConnection {
     }
 
     private void handleMessage(ByteBufferBsonInput input, int requestID, int responseTo) {
-        input.readInt32();
+        input.readInt32(); // flagBits
         int type = input.readByte();
         BsonDocument response = null;
         switch (type) {
@@ -190,38 +186,52 @@ public class DocDBServerConnection extends AsyncConnection {
 
     private BsonDocument handleCommand(ByteBufferBsonInput input) {
         BsonDocument doc = decode(input);
-        logger.info(doc.toJson());
+        if (DEBUG)
+            logger.info("command: {}", doc.toJson());
         String command = doc.getFirstKey().toLowerCase();
         switch (command) {
         case "insert": {
             int n = 0;
             Table table = getTable(doc, "insert");
-            try (ServerSession session = createSession(table.getDatabase())) {
-                BsonArray documents = doc.getArray("documents", null);
-                if (documents != null) {
-                    for (int i = 0, size = documents.size(); i < size; i++) {
-                        String json = documents.get(i).asDocument().toJson();
-                        Row row = table.getTemplateRow();
-                        row.setValue(0, ValueString.get(json));
-                        table.addRow(session, row);
-                        n++;
-                    }
-                }
-                while (input.hasRemaining()) {
-                    input.readByte();
-                    input.readInt32(); // size
-                    input.readCString();
-                    doc = decode(input);
-                    logger.info(doc.toJson());
-
-                    String json = doc.toJson();
+            // try (ServerSession session = createSession(table.getDatabase())) {
+            ServerSession session = createSession(table.getDatabase());
+            BsonArray documents = doc.getArray("documents", null);
+            if (documents != null) {
+                for (int i = 0, size = documents.size(); i < size; i++) {
+                    String json = documents.get(i).asDocument().toJson();
                     Row row = table.getTemplateRow();
                     row.setValue(0, ValueString.get(json));
-                    table.addRow(session, row);
-                    n++;
+                    table.addRow(session, row).onComplete(ar -> {
+                        if (ar.isSucceeded()) {
+                            session.commit();
+                        } else {
+                            session.rollback();
+                        }
+                    });
                 }
-                session.commit();
             }
+            while (input.hasRemaining()) {
+                input.readByte();
+                input.readInt32(); // size
+                input.readCString();
+                doc = decode(input);
+                if (DEBUG)
+                    logger.info(doc.toJson());
+
+                String json = doc.toJson();
+                Row row = table.getTemplateRow();
+                row.setValue(0, ValueString.get(json));
+                table.addRow(session, row).onComplete(ar -> {
+                    table.getDatabase().removeSession(session);
+                    if (ar.isSucceeded()) {
+                        session.commit();
+                    } else {
+                        session.rollback();
+                    }
+                });
+                n++;
+            }
+            // }
             BsonDocument document = new BsonDocument();
             setOk(document);
             setN(document, n);
@@ -247,6 +257,27 @@ public class DocDBServerConnection extends AsyncConnection {
             cursor.append("firstBatch", documents);
             document.append("cursor", cursor);
             setOk(document);
+            return document;
+        }
+        case "update": {
+            int n = 0;
+            BsonArray updates = doc.getArray("updates", null);
+            if (updates != null) {
+                for (int i = 0, size = updates.size(); i < size; i++) {
+                    BsonDocument update = updates.get(i).asDocument();
+                    if (DEBUG)
+                        logger.info(update.toJson());
+                    BsonDocument q = update.getDocument("q", null);
+                    BsonDocument u = update.getDocument("u", null);
+                    if (u == null)
+                        continue;
+                    if (q != null) {
+                    }
+                }
+            }
+            BsonDocument document = new BsonDocument();
+            setOk(document);
+            setN(document, n);
             return document;
         }
         case "delete": {
@@ -290,6 +321,16 @@ public class DocDBServerConnection extends AsyncConnection {
             setOk(document);
             return document;
         }
+        case "drop": {
+            Table table = getTable(doc, "drop");
+            try (ServerSession session = createSession(table.getDatabase())) {
+                String sql = "DROP TABLE IF EXISTS " + table.getSQL();
+                session.prepareStatementLocal(sql).executeUpdate();
+            }
+            BsonDocument document = new BsonDocument();
+            setOk(document);
+            return document;
+        }
         default:
             BsonDocument document = new BsonDocument();
             setWireVersion(document);
@@ -318,10 +359,12 @@ public class DocDBServerConnection extends AsyncConnection {
         input.readInt32();
         input.readInt32();
         BsonDocument doc = decode(input);
-        logger.info(doc.toJson());
+        if (DEBUG)
+            logger.info("query: {}", doc.toJson());
         while (input.hasRemaining()) {
             BsonDocument returnFieldsSelector = decode(input);
-            logger.info(returnFieldsSelector);
+            if (DEBUG)
+                logger.info("returnFieldsSelector: {}", returnFieldsSelector.toJson());
         }
         input.close();
         sendResponse(requestID);
@@ -348,9 +391,7 @@ public class DocDBServerConnection extends AsyncConnection {
         out.writeInt32(0);
         out.writeInt32(1);
 
-        Codec<BsonDocument> encoder = getCodec(document);
-        BsonBinaryWriter bsonBinaryWriter = new BsonBinaryWriter(out);
-        encoder.encode(bsonBinaryWriter, document, EncoderContext.builder().build());
+        encode(out, document);
 
         out.writeInt32(0, out.getPosition());
         sendMessage(out.toByteArray());
@@ -358,29 +399,12 @@ public class DocDBServerConnection extends AsyncConnection {
     }
 
     private BsonDocument decode(ByteBufferBsonInput input) {
-        DecoderContext decoderContext = DecoderContext.builder().build();
         BsonBinaryReader reader = new BsonBinaryReader(input);
-        List<BsonElement> keyValuePairs = new ArrayList<BsonElement>();
-        reader.readStartDocument();
-        while (reader.readBsonType() != BsonType.END_OF_DOCUMENT) {
-            String fieldName = reader.readName();
-            keyValuePairs.add(new BsonElement(fieldName, readValue(reader, decoderContext)));
-        }
-        reader.readEndDocument();
-        return new BsonDocument(keyValuePairs);
+        return codec.decode(reader, decoderContext);
     }
 
-    private static final CodecRegistry DEFAULT_REGISTRY = fromProviders(
-            asList(new ValueCodecProvider(), new BsonValueCodecProvider()));
-
-    private BsonValue readValue(final BsonReader reader, final DecoderContext decoderContext) {
-        return DEFAULT_REGISTRY
-                .get(BsonValueCodecProvider.getClassForBsonType(reader.getCurrentBsonType()))
-                .decode(reader, decoderContext);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Codec<BsonDocument> getCodec(final BsonDocument document) {
-        return (Codec<BsonDocument>) DEFAULT_REGISTRY.get(document.getClass());
+    private void encode(BasicOutputBuffer out, BsonDocument document) {
+        BsonBinaryWriter bsonBinaryWriter = new BsonBinaryWriter(out);
+        codec.encode(bsonBinaryWriter, document, encoderContext);
     }
 }
