@@ -7,23 +7,12 @@ package org.lealone.docdb.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
-import org.bson.BsonArray;
-import org.bson.BsonBinary;
 import org.bson.BsonBinaryReader;
 import org.bson.BsonBinaryWriter;
-import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
-import org.bson.BsonInt32;
-import org.bson.BsonInt64;
-import org.bson.BsonString;
 import org.bson.ByteBufNIO;
 import org.bson.codecs.BsonDocumentCodec;
 import org.bson.codecs.DecoderContext;
@@ -33,16 +22,14 @@ import org.bson.io.ByteBufferBsonInput;
 import org.lealone.common.exceptions.DbException;
 import org.lealone.common.logging.Logger;
 import org.lealone.common.logging.LoggerFactory;
-import org.lealone.db.Constants;
-import org.lealone.db.Database;
-import org.lealone.db.LealoneDatabase;
-import org.lealone.db.auth.User;
-import org.lealone.db.index.Cursor;
-import org.lealone.db.result.Row;
-import org.lealone.db.schema.Schema;
 import org.lealone.db.session.ServerSession;
-import org.lealone.db.table.Table;
-import org.lealone.db.value.ValueString;
+import org.lealone.docdb.server.command.BCAggregate;
+import org.lealone.docdb.server.command.BCDelete;
+import org.lealone.docdb.server.command.BCFind;
+import org.lealone.docdb.server.command.BCInsert;
+import org.lealone.docdb.server.command.BCOther;
+import org.lealone.docdb.server.command.BCUpdate;
+import org.lealone.docdb.server.command.BsonCommand;
 import org.lealone.net.AsyncConnection;
 import org.lealone.net.NetBuffer;
 import org.lealone.net.NetBufferOutputStream;
@@ -52,7 +39,7 @@ import org.lealone.server.Scheduler;
 public class DocDBServerConnection extends AsyncConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(DocDBServerConnection.class);
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = BsonCommand.DEBUG;
 
     private final BsonDocumentCodec codec = new BsonDocumentCodec();
     private final DecoderContext decoderContext = DecoderContext.builder().build();
@@ -60,14 +47,38 @@ public class DocDBServerConnection extends AsyncConnection {
 
     private final HashMap<UUID, ServerSession> sessions = new HashMap<>();
 
+    private final DocDBServer server;
     private final Scheduler scheduler;
     private final int connectionId;
 
     protected DocDBServerConnection(DocDBServer server, WritableChannel channel, Scheduler scheduler,
             int connectionId) {
         super(channel, true);
+        this.server = server;
         this.scheduler = scheduler;
         this.connectionId = connectionId;
+    }
+
+    public int getConnectionId() {
+        return connectionId;
+    }
+
+    public HashMap<UUID, ServerSession> getSessions() {
+        return sessions;
+    }
+
+    @Override
+    public void handleException(Exception e) {
+        server.removeConnection(this);
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        for (ServerSession s : sessions.values()) {
+            s.close();
+        }
+        sessions.clear();
     }
 
     private void sendErrorMessage(Throwable e) {
@@ -152,268 +163,25 @@ public class DocDBServerConnection extends AsyncConnection {
         sendResponse(requestID, response);
     }
 
-    private Database getDatabase(BsonDocument doc) {
-        String dbName = doc.getString("$db").getValue();
-        if (dbName == null)
-            dbName = DocDBServer.DATABASE_NAME;
-        Database db = LealoneDatabase.getInstance().findDatabase(dbName);
-        if (db == null) {
-            String sql = "CREATE DATABASE IF NOT EXISTS " + dbName;
-            LealoneDatabase.getInstance().getSystemSession().prepareStatementLocal(sql).executeUpdate();
-            db = LealoneDatabase.getInstance().getDatabase(dbName);
-        }
-        if (!db.isInitialized())
-            db.init();
-        return db;
-    }
-
-    private Table getTable(BsonDocument doc, String key) {
-        Database db = getDatabase(doc);
-        Schema schema = db.getSchema(null, Constants.SCHEMA_MAIN);
-        String tableName = doc.getString(key).getValue();
-        Table table = schema.findTableOrView(null, tableName);
-        if (table == null) {
-            try (ServerSession session = createSession(db)) {
-                String sql = "CREATE TABLE IF NOT EXISTS " + Constants.SCHEMA_MAIN + "." + tableName
-                        + "(f varchar)";
-                session.prepareStatementLocal(sql).executeUpdate();
-            }
-        }
-        return schema.getTableOrView(null, tableName);
-    }
-
-    private ServerSession createSession(Database db) {
-        return db.createSession(getUser(db));
-    }
-
-    private User getUser(Database db) {
-        for (User user : db.getAllUsers()) {
-            if (user.isAdmin())
-                return user;
-        }
-        return db.getAllUsers().get(0);
-    }
-
     private BsonDocument handleCommand(ByteBufferBsonInput input) {
         BsonDocument doc = decode(input);
         if (DEBUG)
             logger.info("command: {}", doc.toJson());
         String command = doc.getFirstKey().toLowerCase();
         switch (command) {
-        case "insert": {
-            Table table = getTable(doc, "insert");
-            ArrayList<BsonDocument> list = new ArrayList<>();
-            ServerSession session = createSession(table.getDatabase());
-            BsonArray documents = doc.getArray("documents", null);
-            if (documents != null) {
-                for (int i = 0, size = documents.size(); i < size; i++) {
-                    list.add(documents.get(i).asDocument());
-                }
-            }
-            while (input.hasRemaining()) {
-                input.readByte();
-                input.readInt32(); // size
-                input.readCString();
-                doc = decode(input);
-                list.add(doc);
-            }
-            int size = list.size();
-            AtomicInteger counter = new AtomicInteger(size);
-            AtomicBoolean isFailed = new AtomicBoolean(false);
-            for (int i = 0; i < size && !isFailed.get(); i++) {
-                String json = list.get(i).toJson();
-                if (DEBUG)
-                    logger.info(doc.toJson());
-                Row row = table.getTemplateRow();
-                row.setValue(0, ValueString.get(json));
-                table.addRow(session, row).onComplete(ar -> {
-                    if (isFailed.get())
-                        return;
-                    if (ar.isFailed()) {
-                        isFailed.set(true);
-                        session.rollback();
-                    }
-                    if (counter.decrementAndGet() == 0 || isFailed.get()) {
-                        session.commit();
-                        table.getDatabase().removeSession(session);
-                    }
-                });
-            }
-            BsonDocument document = new BsonDocument();
-            setOk(document);
-            setN(document, size);
-            return document;
-        }
-        case "find": {
-            Table table = getTable(doc, "find");
-            BsonArray documents = new BsonArray();
-            try (ServerSession session = createSession(table.getDatabase())) {
-                Cursor cursor = table.getScanIndex(session).find(session, null, null);
-                while (cursor.next()) {
-                    String json = cursor.get().getValue(0).getString();
-                    // documents.add(new BsonString(json));
-                    documents.add(BsonDocument.parse(json));
-                }
-                session.commit();
-            }
-            BsonDocument document = new BsonDocument();
-            BsonDocument cursor = new BsonDocument();
-            cursor.append("id", new BsonInt64(0));
-            cursor.append("ns", new BsonString(
-                    doc.getString("$db").getValue() + "." + doc.getString("find").getValue()));
-            cursor.append("firstBatch", documents);
-            document.append("cursor", cursor);
-            setOk(document);
-            return document;
-        }
-        case "update": {
-            int n = 0;
-            BsonArray updates = doc.getArray("updates", null);
-            if (updates != null) {
-                for (int i = 0, size = updates.size(); i < size; i++) {
-                    BsonDocument update = updates.get(i).asDocument();
-                    if (DEBUG)
-                        logger.info(update.toJson());
-                    BsonDocument q = update.getDocument("q", null);
-                    BsonDocument u = update.getDocument("u", null);
-                    if (u == null)
-                        continue;
-                    if (q != null) {
-                    }
-                }
-            }
-            BsonDocument document = new BsonDocument();
-            setOk(document);
-            setN(document, n);
-            return document;
-        }
-        case "delete": {
-            int n = 0;
-            Table table = getTable(doc, "delete");
-            try (ServerSession session = createSession(table.getDatabase())) {
-                Cursor cursor = table.getScanIndex(session).find(session, null, null);
-                while (cursor.next()) {
-                    table.removeRow(session, cursor.get());
-                    n++;
-                }
-                session.commit();
-            }
-            BsonDocument document = new BsonDocument();
-            setOk(document);
-            setN(document, n);
-            return document;
-        }
-        case "hello":
-        case "ismaster": {
-            BsonDocument document = new BsonDocument();
-            document.append("ismaster", new BsonBoolean(true));
-            document.append("connectionId", new BsonInt32(connectionId));
-            document.append("readOnly", new BsonBoolean(false));
-            setWireVersion(document);
-            setOk(document);
-            document.append("isWritablePrimary", new BsonBoolean(true));
-            return document;
-        }
-        case "buildinfo": {
-            BsonDocument document = new BsonDocument();
-            document.append("version", new BsonString("6.0.0"));
-            setOk(document);
-            return document;
-        }
-        case "getparameter": {
-            BsonDocument document = new BsonDocument();
-            BsonDocument v = new BsonDocument();
-            v.append("version", new BsonString("6.0"));
-            document.append("featureCompatibilityVersion", v);
-            setOk(document);
-            return document;
-        }
-        case "drop": {
-            Table table = getTable(doc, "drop");
-            try (ServerSession session = createSession(table.getDatabase())) {
-                String sql = "DROP TABLE IF EXISTS " + table.getSQL();
-                session.prepareStatementLocal(sql).executeUpdate();
-            }
-            BsonDocument document = new BsonDocument();
-            setOk(document);
-            return document;
-        }
-        case "startsession": {
-            Database db = getDatabase(doc);
-            ServerSession session = createSession(db);
-            UUID id = UUID.randomUUID();
-            sessions.put(id, session);
-            BsonDocument document = new BsonDocument();
-            document.append("id", new BsonBinary(id));
-            document.append("timeoutMinutes", new BsonInt32(30));
-            setOk(document);
-            return document;
-        }
-        case "killsessions": {
-            for (UUID id : decodeUUIDs(doc, "killSessions")) {
-                ServerSession session = sessions.remove(id);
-                if (session != null)
-                    session.close();
-            }
-            return newOkBsonDocument();
-        }
-        case "refreshsessions": {
-            for (UUID id : decodeUUIDs(doc, "refreshSessions")) {
-                ServerSession session = sessions.get(id);
-                if (session != null)
-                    session.close();
-            }
-            return newOkBsonDocument();
-        }
-        case "endsessions": {
-            for (UUID id : decodeUUIDs(doc, "endSessions")) {
-                ServerSession session = sessions.remove(id);
-                if (session != null)
-                    session.close();
-            }
-            return newOkBsonDocument();
-        }
+        case "insert":
+            return BCInsert.execute(input, doc, this);
+        case "update":
+            return BCUpdate.execute(input, doc);
+        case "delete":
+            return BCDelete.execute(input, doc);
+        case "find":
+            return BCFind.execute(input, doc);
+        case "aggregate":
+            return BCAggregate.execute(input, doc);
         default:
-            BsonDocument document = new BsonDocument();
-            setWireVersion(document);
-            setOk(document);
-            setN(document, 0);
-            return document;
+            return BCOther.execute(input, doc, this, command);
         }
-    }
-
-    private List<UUID> decodeUUIDs(BsonDocument doc, Object key) {
-        BsonArray ba = doc.getArray(key, null);
-        if (ba != null) {
-            int size = ba.size();
-            List<UUID> list = new ArrayList<>(size);
-            for (int i = 0; i < size; i++) {
-                BsonDocument s = ba.get(i).asDocument();
-                UUID id = s.getBinary("id").asUuid();
-                list.add(id);
-            }
-            return list;
-        }
-        return Collections.emptyList();
-    }
-
-    private BsonDocument newOkBsonDocument() {
-        BsonDocument document = new BsonDocument();
-        setOk(document);
-        return document;
-    }
-
-    private void setOk(BsonDocument doc) {
-        doc.append("ok", new BsonInt32(1));
-    }
-
-    private void setN(BsonDocument doc, int n) {
-        doc.append("n", new BsonInt32(n));
-    }
-
-    private void setWireVersion(BsonDocument doc) {
-        doc.append("minWireVersion", new BsonInt32(0));
-        doc.append("maxWireVersion", new BsonInt32(17));
     }
 
     private void handleQuery(ByteBufferBsonInput input, int requestID, int responseTo, int opCode) {
@@ -435,10 +203,9 @@ public class DocDBServerConnection extends AsyncConnection {
 
     private void sendResponse(int requestID) {
         BsonDocument document = new BsonDocument();
-        document.append("minWireVersion", new BsonInt32(2));
-        document.append("maxWireVersion", new BsonInt32(6));
-        setOk(document);
-        setN(document, 1);
+        BsonCommand.setWireVersion(document);
+        BsonCommand.setOk(document);
+        BsonCommand.setN(document, 1);
         sendResponse(requestID, document);
     }
 
@@ -461,7 +228,7 @@ public class DocDBServerConnection extends AsyncConnection {
         out.close();
     }
 
-    private BsonDocument decode(ByteBufferBsonInput input) {
+    public BsonDocument decode(ByteBufferBsonInput input) {
         BsonBinaryReader reader = new BsonBinaryReader(input);
         return codec.decode(reader, decoderContext);
     }
