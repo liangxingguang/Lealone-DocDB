@@ -31,12 +31,15 @@ public class BCInsert extends BsonCommand {
                 list.add(documents.get(i).asDocument());
             }
         }
-        while (input.hasRemaining()) {
+        // mongodb-driver-sync会把documents包含在独立的payload中，需要特殊处理
+        if (input.hasRemaining()) {
             input.readByte();
             input.readInt32(); // size
             input.readCString();
-            doc = conn.decode(input);
-            list.add(doc);
+            while (input.hasRemaining()) {
+                doc = conn.decode(input);
+                list.add(doc);
+            }
         }
         int size = list.size();
         AtomicInteger counter = new AtomicInteger(size);
