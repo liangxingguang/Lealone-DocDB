@@ -5,8 +5,11 @@
  */
 package org.lealone.docdb.server.command;
 
+import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
 import org.bson.BsonInt32;
+import org.bson.BsonInt64;
+import org.bson.BsonString;
 import org.lealone.common.logging.Logger;
 import org.lealone.common.logging.LoggerFactory;
 import org.lealone.db.Constants;
@@ -30,16 +33,16 @@ public abstract class BsonCommand {
     }
 
     public static void setOk(BsonDocument doc) {
-        doc.append("ok", new BsonInt32(1));
+        append(doc, "ok", 1);
     }
 
     public static void setN(BsonDocument doc, int n) {
-        doc.append("n", new BsonInt32(n));
+        append(doc, "n", n);
     }
 
     public static void setWireVersion(BsonDocument doc) {
-        doc.append("minWireVersion", new BsonInt32(0));
-        doc.append("maxWireVersion", new BsonInt32(17));
+        append(doc, "minWireVersion", 0);
+        append(doc, "maxWireVersion", 17);
     }
 
     public static Database getDatabase(BsonDocument doc) {
@@ -82,5 +85,21 @@ public abstract class BsonCommand {
                 return user;
         }
         return db.getAllUsers().get(0);
+    }
+
+    public static void append(BsonDocument doc, String key, boolean value) {
+        doc.append(key, new BsonBoolean(value));
+    }
+
+    public static void append(BsonDocument doc, String key, int value) {
+        doc.append(key, new BsonInt32(value));
+    }
+
+    public static void append(BsonDocument doc, String key, long value) {
+        doc.append(key, new BsonInt64(value));
+    }
+
+    public static void append(BsonDocument doc, String key, String value) {
+        doc.append(key, new BsonString(value));
     }
 }

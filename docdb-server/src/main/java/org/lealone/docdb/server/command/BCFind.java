@@ -9,8 +9,6 @@ import java.util.Map.Entry;
 
 import org.bson.BsonArray;
 import org.bson.BsonDocument;
-import org.bson.BsonInt64;
-import org.bson.BsonString;
 import org.bson.BsonValue;
 import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.index.Cursor;
@@ -62,9 +60,8 @@ public class BCFind extends BsonCommand {
         }
         BsonDocument document = new BsonDocument();
         BsonDocument cursor = new BsonDocument();
-        cursor.append("id", new BsonInt64(0));
-        cursor.append("ns", new BsonString(
-                doc.getString("$db").getValue() + "." + doc.getString("find").getValue()));
+        append(cursor, "id", 0L);
+        append(cursor, "ns", doc.getString("$db").getValue() + "." + doc.getString("find").getValue());
         cursor.append("firstBatch", documents);
         document.append("cursor", cursor);
         setOk(document);

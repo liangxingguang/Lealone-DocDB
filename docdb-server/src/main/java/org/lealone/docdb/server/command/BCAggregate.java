@@ -7,9 +7,6 @@ package org.lealone.docdb.server.command;
 
 import org.bson.BsonArray;
 import org.bson.BsonDocument;
-import org.bson.BsonInt32;
-import org.bson.BsonInt64;
-import org.bson.BsonString;
 import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.session.ServerSession;
 import org.lealone.db.table.Table;
@@ -37,13 +34,13 @@ public class BCAggregate extends BsonCommand {
         }
         BsonDocument document = new BsonDocument();
         BsonDocument cursor = new BsonDocument();
-        cursor.append("id", new BsonInt64(0));
-        cursor.append("ns", new BsonString(
-                doc.getString("$db").getValue() + "." + doc.getString("aggregate").getValue()));
+        append(cursor, "id", 0L);
+        append(cursor, "ns",
+                doc.getString("$db").getValue() + "." + doc.getString("aggregate").getValue());
         BsonArray documents = new BsonArray();
         BsonDocument agg = new BsonDocument();
-        agg.append("_id", new BsonInt32(1));
-        agg.append("n", new BsonInt32((int) rowCount));
+        append(agg, "_id", 1);
+        append(agg, "n", (int) rowCount);
         documents.add(agg);
         cursor.append("firstBatch", documents);
         document.append("cursor", cursor);

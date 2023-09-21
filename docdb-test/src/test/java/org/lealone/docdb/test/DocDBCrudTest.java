@@ -5,6 +5,8 @@
  */
 package org.lealone.docdb.test;
 
+import java.util.ArrayList;
+
 import org.bson.Document;
 
 import com.mongodb.client.MongoClient;
@@ -32,21 +34,29 @@ public class DocDBCrudTest {
         mongoClient.close();
     }
 
+    static Document createDocument(int f1, int f2) {
+        return new Document().append("f1", f1).append("f2", f2);
+    }
+
     static void insert(MongoCollection<Document> collection) {
-        Document doc0 = new Document().append("f1", 2).append("f2", 1);
-        InsertOneResult r = collection.insertOne(doc0);
+        Document doc = createDocument(1, 2);
+        InsertOneResult r = collection.insertOne(doc);
         System.out.println("InsertedId: " + r.getInsertedId());
-        doc0 = new Document().append("f1", 2).append("f2", 1);
-        r = collection.insertOne(doc0);
+        doc = createDocument(10, 20);
+        r = collection.insertOne(doc);
         System.out.println("InsertedId: " + r.getInsertedId());
-        // long count = collection.countDocuments();
-        // System.out.println("total document count: " + count);
-        // Document doc1 = new Document("_id", count + 1).append("f1", 1).append("f2", 1);
-        // collection.insertOne(doc1);
+
+        ArrayList<Document> documents = new ArrayList<>();
+        documents.add(createDocument(11, 21));
+        documents.add(createDocument(12, 22));
+        collection.insertMany(documents);
+
+        long count = collection.countDocuments();
+        System.out.println("total document count: " + count);
     }
 
     static void query(MongoCollection<Document> collection) {
-        MongoCursor<Document> cursor = collection.find(Filters.eq("f1", 2))
+        MongoCursor<Document> cursor = collection.find(Filters.eq("f1", 1))
                 .projection(Projections.include("f2")).iterator();
         try {
             while (cursor.hasNext()) {

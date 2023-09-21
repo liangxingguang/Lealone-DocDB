@@ -12,10 +12,7 @@ import java.util.UUID;
 
 import org.bson.BsonArray;
 import org.bson.BsonBinary;
-import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
-import org.bson.BsonInt32;
-import org.bson.BsonString;
 import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.Database;
 import org.lealone.db.session.ServerSession;
@@ -30,24 +27,24 @@ public class BCOther extends BsonCommand {
         case "hello":
         case "ismaster": {
             BsonDocument document = new BsonDocument();
-            document.append("ismaster", new BsonBoolean(true));
-            document.append("connectionId", new BsonInt32(conn.getConnectionId()));
-            document.append("readOnly", new BsonBoolean(false));
+            append(document, "ismaster", true);
+            append(document, "connectionId", conn.getConnectionId());
+            append(document, "readOnly", false);
             setWireVersion(document);
             setOk(document);
-            document.append("isWritablePrimary", new BsonBoolean(true));
+            append(document, "isWritablePrimary", true);
             return document;
         }
         case "buildinfo": {
             BsonDocument document = new BsonDocument();
-            document.append("version", new BsonString("6.0.0"));
+            append(document, "version", "6.0.0");
             setOk(document);
             return document;
         }
         case "getparameter": {
             BsonDocument document = new BsonDocument();
             BsonDocument v = new BsonDocument();
-            v.append("version", new BsonString("6.0"));
+            append(v, "version", "6.0");
             document.append("featureCompatibilityVersion", v);
             setOk(document);
             return document;
@@ -69,7 +66,7 @@ public class BCOther extends BsonCommand {
             conn.getSessions().put(id, session);
             BsonDocument document = new BsonDocument();
             document.append("id", new BsonBinary(id));
-            document.append("timeoutMinutes", new BsonInt32(30));
+            append(document, "timeoutMinutes", 30);
             setOk(document);
             return document;
         }
