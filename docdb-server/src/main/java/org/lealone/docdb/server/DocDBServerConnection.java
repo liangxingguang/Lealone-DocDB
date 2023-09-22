@@ -8,6 +8,7 @@ package org.lealone.docdb.server;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.LinkedList;
 import java.util.UUID;
 
 import org.bson.BsonBinaryReader;
@@ -22,6 +23,7 @@ import org.bson.io.ByteBufferBsonInput;
 import org.lealone.common.exceptions.DbException;
 import org.lealone.common.logging.Logger;
 import org.lealone.common.logging.LoggerFactory;
+import org.lealone.db.Database;
 import org.lealone.db.session.ServerSession;
 import org.lealone.docdb.server.command.BCAggregate;
 import org.lealone.docdb.server.command.BCDelete;
@@ -47,6 +49,9 @@ public class DocDBServerConnection extends AsyncConnection {
 
     private final HashMap<UUID, ServerSession> sessions = new HashMap<>();
 
+    @SuppressWarnings("unused")
+    private final HashMap<String, LinkedList<PooledSession>> pooledSessionsMap = new HashMap<>();
+
     private final DocDBServer server;
     private final Scheduler scheduler;
     private final int connectionId;
@@ -59,12 +64,38 @@ public class DocDBServerConnection extends AsyncConnection {
         this.connectionId = connectionId;
     }
 
+    public Scheduler getScheduler() {
+        return scheduler;
+    }
+
     public int getConnectionId() {
         return connectionId;
     }
 
     public HashMap<UUID, ServerSession> getSessions() {
         return sessions;
+    }
+
+    public PooledSession getPooledSession(Database db) {
+        return new PooledSession(db, BsonCommand.getUser(db), 0, this);
+        // LinkedList<PooledSession> pooledSessions = pooledSessionsMap.get(db.getName());
+        // PooledSession ps = null;
+        // if (pooledSessions == null) {
+        // pooledSessions = new LinkedList<>();
+        // pooledSessionsMap.put(db.getName(), pooledSessions);
+        // } else {
+        // ps = pooledSessions.pollFirst();
+        // }
+        // if (ps == null)
+        // ps = new PooledSession(db, BsonCommand.getUser(db), 0, this);
+        // scheduler.setCurrentSession(ps);
+        // return ps;
+    }
+
+    public void addPooledSession(PooledSession ps) {
+        // LinkedList<PooledSession> pooledSessions = pooledSessionsMap.get(ps.getDatabase().getName());
+        // if (pooledSessions != null && pooledSessions.size() < 8)
+        // pooledSessions.add(ps);
     }
 
     @Override
@@ -172,13 +203,13 @@ public class DocDBServerConnection extends AsyncConnection {
         case "insert":
             return BCInsert.execute(input, doc, this);
         case "update":
-            return BCUpdate.execute(input, doc);
+            return BCUpdate.execute(input, doc, this);
         case "delete":
-            return BCDelete.execute(input, doc);
+            return BCDelete.execute(input, doc, this);
         case "find":
-            return BCFind.execute(input, doc);
+            return BCFind.execute(input, doc, this);
         case "aggregate":
-            return BCAggregate.execute(input, doc);
+            return BCAggregate.execute(input, doc, this);
         default:
             return BCOther.execute(input, doc, this, command);
         }

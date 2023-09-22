@@ -14,12 +14,15 @@ import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.index.Cursor;
 import org.lealone.db.session.ServerSession;
 import org.lealone.db.table.Table;
+import org.lealone.db.value.ValueMap;
+import org.lealone.docdb.server.DocDBServerConnection;
 
 public class BCFind extends BsonCommand {
 
-    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc) {
-        Table table = getTable(doc, "find");
-        ServerSession session = createSession(table.getDatabase());
+    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc,
+            DocDBServerConnection conn) {
+        Table table = getTable(doc, "find", conn);
+        ServerSession session = getSession(table.getDatabase(), conn);
         // Select select = new Select(session);
         BsonDocument filter = doc.getDocument("filter", null);
         if (filter != null) {
@@ -36,8 +39,7 @@ public class BCFind extends BsonCommand {
         try {
             Cursor cursor = table.getScanIndex(session).find(session, null, null);
             while (cursor.next()) {
-                String json = cursor.get().getValue(0).getString();
-                BsonDocument document = BsonDocument.parse(json);
+                BsonDocument document = toBsonDocument((ValueMap) cursor.get().getValue(0));
                 if (filter != null) {
                     boolean b = true;
                     for (Entry<String, BsonValue> e : filter.entrySet()) {

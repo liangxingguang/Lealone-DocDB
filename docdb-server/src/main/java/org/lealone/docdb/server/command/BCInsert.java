@@ -15,16 +15,15 @@ import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.result.Row;
 import org.lealone.db.session.ServerSession;
 import org.lealone.db.table.Table;
-import org.lealone.db.value.ValueString;
 import org.lealone.docdb.server.DocDBServerConnection;
 
 public class BCInsert extends BsonCommand {
 
     public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc,
             DocDBServerConnection conn) {
-        Table table = getTable(doc, "insert");
+        Table table = getTable(doc, "insert", conn);
         ArrayList<BsonDocument> list = new ArrayList<>();
-        ServerSession session = createSession(table.getDatabase());
+        ServerSession session = getSession(table.getDatabase(), conn);
         BsonArray documents = doc.getArray("documents", null);
         if (documents != null) {
             for (int i = 0, size = documents.size(); i < size; i++) {
@@ -45,11 +44,9 @@ public class BCInsert extends BsonCommand {
         AtomicInteger counter = new AtomicInteger(size);
         AtomicBoolean isFailed = new AtomicBoolean(false);
         for (int i = 0; i < size && !isFailed.get(); i++) {
-            String json = list.get(i).toJson();
-            if (DEBUG)
-                logger.info(doc.toJson());
+            BsonDocument document = list.get(i);
             Row row = table.getTemplateRow();
-            row.setValue(0, ValueString.get(json));
+            row.setValue(0, toValueMap(document));
             table.addRow(session, row).onComplete(ar -> {
                 if (isFailed.get())
                     return;
@@ -58,8 +55,7 @@ public class BCInsert extends BsonCommand {
                     session.rollback();
                 }
                 if (counter.decrementAndGet() == 0 || isFailed.get()) {
-                    session.commit();
-                    session.close();
+                    session.asyncCommit(() -> session.close());
                 }
             });
         }

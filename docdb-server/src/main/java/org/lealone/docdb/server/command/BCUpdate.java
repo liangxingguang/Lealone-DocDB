@@ -8,10 +8,12 @@ package org.lealone.docdb.server.command;
 import org.bson.BsonArray;
 import org.bson.BsonDocument;
 import org.bson.io.ByteBufferBsonInput;
+import org.lealone.docdb.server.DocDBServerConnection;
 
 public class BCUpdate extends BsonCommand {
 
-    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc) {
+    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc,
+            DocDBServerConnection conn) {
         int n = 0;
         BsonArray updates = doc.getArray("updates", null);
         if (updates != null) {

@@ -5,11 +5,17 @@
  */
 package org.lealone.docdb.server.command;
 
+import java.util.ArrayList;
+import java.util.Map;
+import java.util.Map.Entry;
+
 import org.bson.BsonBoolean;
 import org.bson.BsonDocument;
+import org.bson.BsonElement;
 import org.bson.BsonInt32;
 import org.bson.BsonInt64;
 import org.bson.BsonString;
+import org.bson.BsonValue;
 import org.lealone.common.logging.Logger;
 import org.lealone.common.logging.LoggerFactory;
 import org.lealone.db.Constants;
@@ -19,12 +25,18 @@ import org.lealone.db.auth.User;
 import org.lealone.db.schema.Schema;
 import org.lealone.db.session.ServerSession;
 import org.lealone.db.table.Table;
+import org.lealone.db.value.Value;
+import org.lealone.db.value.ValueInt;
+import org.lealone.db.value.ValueLong;
+import org.lealone.db.value.ValueMap;
+import org.lealone.db.value.ValueString;
 import org.lealone.docdb.server.DocDBServer;
+import org.lealone.docdb.server.DocDBServerConnection;
 
 public abstract class BsonCommand {
 
     public static final Logger logger = LoggerFactory.getLogger(BsonCommand.class);
-    public static final boolean DEBUG = true;
+    public static final boolean DEBUG = false;
 
     public static BsonDocument newOkBsonDocument() {
         BsonDocument document = new BsonDocument();
@@ -60,15 +72,15 @@ public abstract class BsonCommand {
         return db;
     }
 
-    public static Table getTable(BsonDocument doc, String key) {
+    public static Table getTable(BsonDocument doc, String key, DocDBServerConnection conn) {
         Database db = getDatabase(doc);
         Schema schema = db.getSchema(null, Constants.SCHEMA_MAIN);
         String tableName = doc.getString(key).getValue();
         Table table = schema.findTableOrView(null, tableName);
         if (table == null) {
-            try (ServerSession session = createSession(db)) {
+            try (ServerSession session = getSession(db, conn)) {
                 String sql = "CREATE TABLE IF NOT EXISTS " + Constants.SCHEMA_MAIN + "." + tableName
-                        + "(f varchar)";
+                        + "(_json_ map<varchar, object>)";
                 session.prepareStatementLocal(sql).executeUpdate();
             }
         }
@@ -76,10 +88,15 @@ public abstract class BsonCommand {
     }
 
     public static ServerSession createSession(Database db) {
-        return db.createSession(getUser(db));
+        return new ServerSession(db, getUser(db), 0);
+        // return db.createSession(getUser(db));
     }
 
-    private static User getUser(Database db) {
+    public static ServerSession getSession(Database db, DocDBServerConnection conn) {
+        return conn.getPooledSession(db);
+    }
+
+    public static User getUser(Database db) {
         for (User user : db.getAllUsers()) {
             if (user.isAdmin())
                 return user;
@@ -101,5 +118,59 @@ public abstract class BsonCommand {
 
     public static void append(BsonDocument doc, String key, String value) {
         doc.append(key, new BsonString(value));
+    }
+
+    public static ValueMap toValueMap(BsonDocument doc) {
+        Value[] values = new Value[doc.size() * 2];
+        int index = 0;
+        for (Entry<String, BsonValue> e : doc.entrySet()) {
+            values[index++] = ValueString.get(e.getKey());
+            BsonValue v = e.getValue();
+            switch (v.getBsonType()) {
+            case INT32:
+                values[index++] = ValueInt.get(v.asInt32().getValue());
+                break;
+            case INT64:
+                values[index++] = ValueLong.get(v.asInt64().getValue());
+                break;
+            // case STRING:
+            default:
+                values[index++] = ValueString.get(v.asString().getValue());
+            }
+        }
+
+        ValueMap vMap = ValueMap.get(String.class, Object.class, values);
+        return vMap;
+    }
+
+    public static BsonDocument toBsonDocument(ValueMap vMap) {
+        BsonDocument doc = (BsonDocument) vMap.getDocument();
+        if (doc != null)
+            return doc;
+        synchronized (vMap) {
+            doc = (BsonDocument) vMap.getDocument();
+            if (doc != null)
+                return doc;
+            Map<Value, Value> map = vMap.getMap();
+            ArrayList<BsonElement> bsonElements = new ArrayList<>(map.size());
+            for (Entry<Value, Value> e : map.entrySet()) {
+                Value v = e.getValue();
+                BsonValue bv;
+                switch (v.getType()) {
+                case Value.INT:
+                    bv = new BsonInt32(v.getInt());
+                    break;
+                case Value.LONG:
+                    bv = new BsonInt64(v.getLong());
+                    break;
+                default:
+                    bv = new BsonString(v.getString());
+                }
+                bsonElements.add(new BsonElement(e.getKey().getString(), bv));
+            }
+            doc = new BsonDocument(bsonElements);
+            vMap.setDocument(doc);
+            return doc;
+        }
     }
 }

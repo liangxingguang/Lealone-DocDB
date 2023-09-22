@@ -10,11 +10,13 @@ import org.bson.BsonDocument;
 import org.bson.io.ByteBufferBsonInput;
 import org.lealone.db.session.ServerSession;
 import org.lealone.db.table.Table;
+import org.lealone.docdb.server.DocDBServerConnection;
 
 public class BCAggregate extends BsonCommand {
 
-    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc) {
-        Table table = getTable(doc, "aggregate");
+    public static BsonDocument execute(ByteBufferBsonInput input, BsonDocument doc,
+            DocDBServerConnection conn) {
+        Table table = getTable(doc, "aggregate", conn);
         BsonArray pipeline = doc.getArray("pipeline", null);
         long rowCount = 0;
         if (pipeline != null) {
@@ -24,7 +26,7 @@ public class BCAggregate extends BsonCommand {
                 if (group != null) {
                     BsonDocument agg = group.getDocument("n", null);
                     if (agg != null && agg.containsKey("$sum")) {
-                        ServerSession session = createSession(table.getDatabase());
+                        ServerSession session = getSession(table.getDatabase(), conn);
                         rowCount = table.getRowCount(session);
                         session.close();
                         break;
