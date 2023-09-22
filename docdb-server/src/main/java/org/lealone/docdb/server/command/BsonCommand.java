@@ -173,4 +173,15 @@ public abstract class BsonCommand {
             return doc;
         }
     }
+
+    public static Long getId(BsonDocument doc) {
+        BsonValue id = doc.get("_id", null);
+        if (id != null) {
+            if (id.isInt32())
+                return Long.valueOf(id.asInt32().getValue());
+            else if (id.isInt64())
+                return Long.valueOf(id.asInt64().getValue());
+        }
+        return null;
+    }
 }

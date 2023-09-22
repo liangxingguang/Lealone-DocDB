@@ -47,6 +47,10 @@ public class BCInsert extends BsonCommand {
             BsonDocument document = list.get(i);
             Row row = table.getTemplateRow();
             row.setValue(0, toValueMap(document));
+            Long id = getId(document);
+            if (id != null) {
+                row.setKey(id.longValue());
+            }
             table.addRow(session, row).onComplete(ar -> {
                 if (isFailed.get())
                     return;
